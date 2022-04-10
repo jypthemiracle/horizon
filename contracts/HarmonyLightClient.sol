@@ -11,14 +11,25 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 // import "openzeppelin-solidity/contracts/proxy/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 
+/*
+    Harmony Light Client is deployed to Ethereum network.
+    
+    1. The registered relayers provide updates on the current state of Harmony, as a checkpoint block, to the contract.
+    2. The relayers accomplishes the updating duty of harmony checkpoints by appending header data to a mapping of MMR roots.
+    3. The contract requires i) checkpoint blocks ii) MMR root to verify Harmony transaction proofs while saving the gas.
+*/
+
 contract HarmonyLightClient is
     Initializable,
     PausableUpgradeable,
     AccessControlUpgradeable
 {
+
+    // Library Functions on the left side while applicable type on the right side
     using SafeCast for *;
     using SafeMathUpgradeable for uint256;
 
+    // This is a Harmony checkpoint block; representing struct data in a block header
     struct BlockHeader {
         bytes32 parentHash;
         bytes32 stateRoot;
@@ -32,6 +43,7 @@ contract HarmonyLightClient is
         bytes32 hash;
     }
 
+    // Relayer call the event everytime when updating the checkpoint of Harmony blockchain
     event CheckPoint(
         bytes32 stateRoot,
         bytes32 transactionsRoot,
@@ -44,7 +56,10 @@ contract HarmonyLightClient is
         bytes32 hash
     );
 
+    // The first block header
     BlockHeader firstBlock;
+
+    // the lastest checkpoint block header
     BlockHeader lastCheckPointBlock;
 
     // epoch to block numbers, as there could be >=1 mmr entries per epoch
@@ -53,8 +68,10 @@ contract HarmonyLightClient is
     // block number to BlockHeader
     mapping(uint256 => BlockHeader) checkPointBlocks;
 
+    // epoch to MMR roots
     mapping(uint256 => mapping(bytes32 => bool)) epochMmrRoots;
 
+    // maximum relayers amount
     uint8 relayerThreshold;
 
     event RelayerThresholdChanged(uint256 newThreshold);
@@ -63,6 +80,7 @@ contract HarmonyLightClient is
 
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
 
+    // the modifiers to set access control
     modifier onlyAdmin() {
         require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "sender doesn't have admin role");
         _;
@@ -73,6 +91,7 @@ contract HarmonyLightClient is
         _;
     }
 
+    // pausing and unpausing the light client that only admin can enter into
     function adminPauseLightClient() external onlyAdmin {
         _pause();
     }
@@ -87,11 +106,13 @@ contract HarmonyLightClient is
         renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
+    // updating the maximum amount of registered relayers allowed
     function adminChangeRelayerThreshold(uint256 newThreshold) external onlyAdmin {
         relayerThreshold = newThreshold.toUint8();
         emit RelayerThresholdChanged(newThreshold);
     }
 
+    // adding relayer who can call submitCheckpoint function to update the status that only admin can register the relayer candidate
     function adminAddRelayer(address relayerAddress) external onlyAdmin {
         require(!hasRole(RELAYER_ROLE, relayerAddress), "addr already has relayer role!");
         grantRole(RELAYER_ROLE, relayerAddress);
@@ -104,6 +125,7 @@ contract HarmonyLightClient is
         emit RelayerRemoved(relayerAddress);
     }
 
+    // initialize the contract by setting the default value of firstBlock, epochCheckPointBlockNumbers, checkpointBlocks and registered replyers.
     function initialize(
         bytes memory firstRlpHeader,
         address[] memory initialRelayers,
@@ -113,6 +135,7 @@ contract HarmonyLightClient is
             firstRlpHeader
         );
         
+        // initializing some variables with first block
         firstBlock.parentHash = header.parentHash;
         firstBlock.stateRoot = header.stateRoot;
         firstBlock.transactionsRoot = header.transactionsRoot;
@@ -124,11 +147,13 @@ contract HarmonyLightClient is
         firstBlock.mmrRoot = HarmonyParser.toBytes32(header.mmrRoot);
         firstBlock.hash = header.hash;
         
+        // initializing some values with checkpoint
         epochCheckPointBlockNumbers[header.epoch].push(header.number);
         checkPointBlocks[header.number] = firstBlock;
 
         epochMmrRoots[header.epoch][firstBlock.mmrRoot] = true;
 
+        // initializing relayers; setup and grant role for them
         relayerThreshold = initialRelayerThreshold;
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         for (uint256 i; i < initialRelayers.length; i++) {
@@ -137,6 +162,12 @@ contract HarmonyLightClient is
 
     }
 
+    /*
+        1. The relayer call this function to update Harmony blockchain status while providing a proper checkpoint block.
+        2. The checkpoint block represents that 1 block every x blocks, where 1 ≤ x ≤ 16384, 16384 is the #blocks per epoch, and stored in checkPointBlocks.
+        3. These checkpoint blocks is used to verify whether any given transaction is included in blocks or not.
+    */ 
+
     function submitCheckpoint(bytes memory rlpHeader) external onlyRelayers whenNotPaused {
         HarmonyParser.BlockHeader memory header = HarmonyParser.toBlockHeader(
             rlpHeader
@@ -144,6 +175,7 @@ contract HarmonyLightClient is
 
         BlockHeader memory checkPointBlock;
         
+        // initialize variables related to the checkpoint block
         checkPointBlock.parentHash = header.parentHash;
         checkPointBlock.stateRoot = header.stateRoot;
         checkPointBlock.transactionsRoot = header.transactionsRoot;
@@ -155,10 +187,13 @@ contract HarmonyLightClient is
         checkPointBlock.mmrRoot = HarmonyParser.toBytes32(header.mmrRoot);
         checkPointBlock.hash = header.hash;
         
+        // mappings updated
         epochCheckPointBlockNumbers[header.epoch].push(header.number);
         checkPointBlocks[header.number] = checkPointBlock;
 
         epochMmrRoots[header.epoch][checkPointBlock.mmrRoot] = true;
+
+        // emitting the checkpoint events
         emit CheckPoint(
             checkPointBlock.stateRoot,
             checkPointBlock.transactionsRoot,
@@ -172,6 +207,9 @@ contract HarmonyLightClient is
         );
     }
 
+    /*
+        Retrieving the closest checkpoint block for a given block number and epoch.
+    */
     function getLatestCheckPoint(uint256 blockNumber, uint256 epoch)
         public
         view
@@ -195,6 +233,9 @@ contract HarmonyLightClient is
         checkPointBlock = checkPointBlocks[nearest];
     }
 
+    /*
+        Checking whether a checkpoint is valid or not with utilizing an epoch and MMR root hash.
+    */
     function isValidCheckPoint(uint256 epoch, bytes32 mmrRoot) public view returns (bool status) {
         return epochMmrRoots[epoch][mmrRoot];
     }
