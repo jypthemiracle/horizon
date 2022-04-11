@@ -9,10 +9,14 @@ import "./EthereumParser.sol";
 import "./lib/EthUtils.sol";
 import "./ethash/ethash.sol";
 
-/// @title Ethereum light client
+/// @title Ethereum light client which is deployed on Harmony network. Everyone can verify a block as long as the chain based on Proof-of-Work.
+// 1) it works to verify the validity of the block header and proof-of-work validation
+// 2) storing the headers for further validation of transaction inclusion.
 contract EthereumLightClient is Ethash, Initializable, PausableUpgradeable {
+    // attaching library type on the left side, type side on the right side
     using SafeMathUpgradeable for uint256;
     
+    // block data is on the struct
     struct StoredBlockHeader {
         uint256 parentHash;
         uint256 stateRoot;
@@ -24,6 +28,7 @@ contract EthereumLightClient is Ethash, Initializable, PausableUpgradeable {
         uint256 hash;
     }
 
+    // block header related info is here
     struct HeaderInfo {
         uint256 total_difficulty;
         bytes32 parent_hash;
@@ -66,6 +71,7 @@ contract EthereumLightClient is Ethash, Initializable, PausableUpgradeable {
 
     uint256 public finalityConfirms;
 
+    // initializing the contract by storing the genesis Ethereum block
     function initialize(bytes memory _rlpHeader) external initializer {
         finalityConfirms = DEFAULT_FINALITY_CONFIRMS;
 
@@ -88,6 +94,10 @@ contract EthereumLightClient is Ethash, Initializable, PausableUpgradeable {
     }
 
     //uint32 constant loopAccesses = 64;      // Number of accesses in hashimoto loop
+    // The relayer calls the function to update Ethereum status with a block header.
+    // The verification of block header requires ...
+    // 1) parent hash 2) block number 3) timestamp difficulty
+    // then stores blockheader to blocks.
     function addBlockHeader(
         bytes memory _rlpHeader,
         bytes32[4][loopAccesses] memory cache,
@@ -171,22 +181,27 @@ contract EthereumLightClient is Ethash, Initializable, PausableUpgradeable {
         return true;
     }
 
+    // it retrieves the maximum block height
     function getBlockHeightMax() public view returns (uint256) {
         return blockHeightMax;
     }
 
+    // it gets the root hash of the state merkle tree
     function getStateRoot(bytes32 blockHash) public view returns (bytes32) {
         return bytes32(blocks[uint256(blockHash)].stateRoot);
     }
 
+    // it gets the root hash of transaction merkle tree
     function getTxRoot(bytes32 blockHash) public view returns (bytes32) {
         return bytes32(blocks[uint256(blockHash)].transactionsRoot);
     }
 
+    // it gets the root hash of the receipt merkle tree
     function getReceiptRoot(bytes32 blockHash) public view returns (bytes32) {
         return bytes32(blocks[uint256(blockHash)].receiptsRoot);
     }
 
+    // verifying the receipt hash
     function VerifyReceiptsHash(bytes32 blockHash, bytes32 receiptsHash)
         external
         view
