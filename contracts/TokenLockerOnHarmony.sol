@@ -8,7 +8,9 @@ import "./EthereumProver.sol";
 import "./TokenLocker.sol";
 
 // Deploying on Harmony network to mint and burn token on Harmony side
-/// while verify token locking operation happen on Ethereum side
+// while verify token locking operation happen on Ethereum side
+// This contract is a descendant of TokenLocker and may be upgraded using the lightClient.
+// It will use a zkp proof to evaluate and execute a submission before sending it through a light client.
 contract TokenLockerOnHarmony is TokenLocker, OwnableUpgradeable {
     using RLPReader for RLPReader.RLPItem;
     using RLPReader for bytes;
